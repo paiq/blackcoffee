@@ -63,6 +63,14 @@ exports.expand = (ast, csToNodes) ->
     if node instanceof nodeTypes.Call and (name = node.variable?.base?.value)
       name += '.'+prop?.name?.value for prop in node.variable.properties
       name
+  getMethodNameAndOwner = (node) ->
+    if node instanceof nodeTypes.Call and (owner = node.variable?.properties) and
+                                          (name = owner[owner.length - 1]?.name?.value)
+      owner = node.variable.subst({})
+      owner.properties.pop()
+      [name, owner]
+    else
+      [null, null]
 
   # Define our lookup-table of macros. We'll start with just these two.
   utils._macros =
@@ -81,6 +89,15 @@ exports.expand = (ast, csToNodes) ->
         return
       throw new Error("macro expects a closure or identifier")
 
+    # `macro.defmethod` defines a macro that expands into a method
+    "macro.defmethod": (arg) ->
+      throw new Error("macro.defmethod expects 1 argument, got #{arguments.length}") unless arguments.length==1
+      if (name = getCalleeName(arg))
+        throw new Error("macro.defmethod expects a closure after identifier") unless arg.args.length==1 and arg.args[0] instanceof nodeTypes.Code
+        utils._methodMacros[name] = getFunc arg.args[0]
+        return
+      throw new Error("macro.defmethod expects a closure or identifier")
+
     # `macro.codeToNode` cannot be implemented like the other compile-time
     # helper methods, because it needs to capture the AST of its argument,
     # instead of the value.
@@ -92,14 +109,23 @@ exports.expand = (ast, csToNodes) ->
       num = utils._codeNodes.length
       utils._codeNodes.push func.body
       utils.jsToNode "macro._codeNodes[#{num}]"
+
+  utils._methodMacros = {}
   
   # And now we'll start the actual work.
   nodeTypes.walk ast, (n) ->
-    if (name = getCalleeName(n)) and (func = utils._macros[name])
+    # to mitigate Object builtins 
+    if ((name = getCalleeName(n)) and (utils._macros.hasOwnProperty name)) or
+       ([name, owner] = getMethodNameAndOwner(n)) and (utils._methodMacros.hasOwnProperty name)
+
       # execute a macro function.
       ld = n.locationData
       utils.file = ld && helpers.filenames[ld.file_num]
       utils.line = ld && 1+ld.first_line
-      res = callFunc func, context, n.args, ld
+      res = if owner?
+              n.args.unshift(owner)
+              callFunc utils._methodMacros[name], context, n.args, ld
+            else
+              callFunc utils._macros[name], context, n.args, ld
       return (if res instanceof nodeTypes.Base then res else false) # delete if not a node
 
