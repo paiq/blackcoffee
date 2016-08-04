@@ -81,7 +81,7 @@
 
   if (output) {
     Fs.writeFileSync(output, js, {
-      flag: "wx",
+      flag: "w",
       mode: executable ? 0x1f8 : 0x1b0
     });
   } else {
@@ -93,7 +93,7 @@
     sourceMap = sourceMap.generate({
       inline: true
     });
-    Fs.writeFileSync(map, sourceMap, null, "wx");
+    Fs.writeFileSync(map, sourceMap, null, "w");
   }
 
 }).call(this);

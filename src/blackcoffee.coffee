@@ -45,12 +45,12 @@ js = (fragment.code for fragment in fragments).join('')
 js = "#!/usr/bin/env node\n"+js if executable
 
 if output
-	Fs.writeFileSync output, js, {flag: "wx", mode: if executable then 0o770 else 0o660}
+	Fs.writeFileSync output, js, {flag: "w", mode: if executable then 0o770 else 0o660}
 else
 	process.stdout.write js
 
 if map
     sourceMap = new SourceMap fragments
     sourceMap = sourceMap.generate {inline: true}
-    Fs.writeFileSync map, sourceMap, null, "wx"
+    Fs.writeFileSync map, sourceMap, null, "w"
 

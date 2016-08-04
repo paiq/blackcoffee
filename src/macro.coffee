@@ -23,78 +23,102 @@ callFunc = (func, obj, args = [], useLocation) ->
 
 callFunc.stopStackTrace = true
 
+# The `context` is the this-object passed to all compile-time executions.
+# It can be used to define compile-time functions or state.
+exports.context = {}
+
+# A container for all helper functions
+exports.utils = undefined
+
 # The main work horse.
 # `ast` is the node tree for which macro expansion is to be done (the original
 # structure will be modified and returned). 
 # `csToNodes` is the exports.nodes function of `coffee-script.coffee`. It
 # needs to be passed in order to prevent circular requires.
 exports.expand = (ast, csToNodes) ->
-  # The `context` is the this-object passed to all compile-time executions.
-  # It can be used to define compile-time functions or state.
-  root.cfg = context = {}
-  # Define some helper functions, that can be used by the macros. They will
-  # be accessible through `root.macro`.
-  root.macro = utils =
-    # allow access to modules and the environment
-    require: require
-    # try to expand macros, compile and evaluate the node (at compile time) and get the value:
-    nodeToVal: (node) -> callFunc getFunc(new @Code([], new @Block([node]))), context if node
-    # if the node is a plain identifier, return it as a string:
-    nodeToId: (node) -> node.base.value if node.base instanceof nodeTypes.Literal and node.isAssignable() and !node.properties?.length
-    # parse `code` as coffeescript (`filename` is for error reporting):
-    csToNode: (code,filename) -> csToNodes(code, {filename}).unwrap()
-    # create a node that includes `code` as a javascript literal
-    jsToNode: (code) -> new nodeTypes.Literal code || "void 0"
-    # convert `expr` to a node (only works for jsonable expressions):
-    valToNode: (expr) -> @jsToNode JSON.stringify expr
-    # read `filename` and parse it (as a js literal when `lang=='js'` or .js extension):
-    fileToNode: (filename, lang) ->
-      code = fs.readFileSync filename, 'utf8'
-      code = code.substr 1 if code.charCodeAt(0)==0xFEFF
-      if lang=='js' or (!lang and filename.match /\.js$/)
-        @jsToNode code
-      else
-        @csToNode code, filename
-    _codeNodes: []
-    keep: {} # return macro.keep from a macro to prevent replacement
-  # Copy all node classes, so macros can do things like `new @Literal(2)`.
-  utils[k] = v for k,v of nodeTypes
-
   getCalleeName = (node) ->
     if node instanceof nodeTypes.Call and (name = node.variable?.base?.value)
       name += '.'+prop?.name?.value for prop in node.variable.properties
       name
 
-  # Define our lookup-table of macros. We'll start with just these two.
-  utils._macros =
+  root.cfg = context = exports.context
+  # Define some helper functions, that can be used by the macros. They will
+  # be accessible through `root.macro`.
+  if not exports.utils
+    root.macro = utils =
+      # allow access to modules and the environment
+      require: require
+      # try to expand macros, compile and evaluate the node (at compile time) and get the value:
+      nodeToVal: (node) -> callFunc getFunc(new @Code([], new @Block([node]))), context if node
+      # if the node is a plain identifier, return it as a string:
+      nodeToId: (node) -> node.base.value if node.base instanceof nodeTypes.Literal and node.isAssignable() and !node.properties?.length
+      # parse `code` as coffeescript (`filename` is for error reporting):
+      csToNode: (code,filename) -> csToNodes(code, {filename}).unwrap()
+      # parse `code` as blackcoffee (`filename` is for error reporting):
+      bcToNode: (code,filename) ->
+        ast = csToNodes(code, {filename}).unwrap()
+        oldfile = utils.file
+        oldline = utils.line
+        ast = exports.expand ast, csToNodes
+        utils.file = oldfile
+        utils.line = oldline
+        return ast
+      # create a node that includes `code` as a javascript literal
+      jsToNode: (code) -> new nodeTypes.Literal code || "void 0"
+      # convert `expr` to a node (only works for jsonable expressions):
+      valToNode: (expr) -> @jsToNode JSON.stringify expr
+      # read `filename` and parse it (as a js literal when `lang=='js'` or .js extension):
+      fileToNode: (filename, lang) ->
+        code = fs.readFileSync filename, 'utf8'
+        code = code.substr 1 if code.charCodeAt(0)==0xFEFF
+        if lang=='js' or (!lang and filename.match /\.js$/)
+          @jsToNode code
+        else
+          @csToNode code, filename
+      # read `filename` and parse it:
+      bcFileToNode: (filename, lang) ->
+        code = fs.readFileSync filename, 'utf8'
+        code = code.substr 1 if code.charCodeAt(0)==0xFEFF
+        code += "\nmacro ->" # For some reason we need the macro keyword at least once in all files which want to process macros
+        @bcToNode code, filename
+      _codeNodes: []
+      keep: {} # return macro.keep from a macro to prevent replacement
+    # Copy all node classes, so macros can do things like `new @Literal(2)`.
+    utils[k] = v for k,v of nodeTypes
 
-    # The `macro` keyword itself is implemented as a predefined macro.
-    macro: (arg) ->
-      throw new Error("macro expects 1 argument, got #{arguments.length}") unless arguments.length==1
-      if arg instanceof nodeTypes.Code
-        # execute now: `macro -> console.log 'compiling...'`
-        throw new Error 'macro expects a closure without parameters' if arg.params.length
-        return callFunc getFunc(arg), context
-      if (name = getCalleeName(arg))
-        # define a macro: `macro someName (a,b) -> a+b`
-        throw new Error("macro expects a closure after identifier") unless arg.args.length==1 and arg.args[0] instanceof nodeTypes.Code
-        utils._macros[name] = getFunc arg.args[0]
-        return
-      throw new Error("macro expects a closure or identifier")
+    # Define our lookup-table of macros. We'll start with just these two.
+    utils._macros =
 
-    # `macro.codeToNode` cannot be implemented like the other compile-time
-    # helper methods, because it needs to capture the AST of its argument,
-    # instead of the value.
-	# Although there is currently nothing to prevent calling this helper
-	# from outside a macro definition, doing so makes no sense.
-    "macro.codeToNode": (func) ->
-      if func not instanceof nodeTypes.Code or func.params.length
-        throw new Error 'macro.codeToNode expects a function (without arguments)'
-      # we want to do a valToNode on the function body, but as valToNode only
-      # works on jsonable stuff, we'll hack something to the same effect:
-      utils._codeNodes.push func.body.unwrap()
-      utils.jsToNode "macro._codeNodes[#{utils._codeNodes.length-1}]"
-  
+      # The `macro` keyword itself is implemented as a predefined macro.
+      macro: (arg) ->
+        throw new Error("macro expects 1 argument, got #{arguments.length}") unless arguments.length==1
+        if arg instanceof nodeTypes.Code
+          # execute now: `macro -> console.log 'compiling...'`
+          throw new Error 'macro expects a closure without parameters' if arg.params.length
+          return callFunc getFunc(arg), context
+        if (name = getCalleeName(arg))
+          # define a macro: `macro someName (a,b) -> a+b`
+          throw new Error("macro expects a closure after identifier") unless arg.args.length==1 and arg.args[0] instanceof nodeTypes.Code
+          utils._macros[name] = getFunc arg.args[0]
+          return
+        throw new Error("macro expects a closure or identifier")
+
+      # `macro.codeToNode` cannot be implemented like the other compile-time
+      # helper methods, because it needs to capture the AST of its argument,
+      # instead of the value.
+    # Although there is currently nothing to prevent calling this helper
+    # from outside a macro definition, doing so makes no sense.
+      "macro.codeToNode": (func) ->
+        if func not instanceof nodeTypes.Code or func.params.length
+          throw new Error 'macro.codeToNode expects a function (without arguments)'
+        # we want to do a valToNode on the function body, but as valToNode only
+        # works on jsonable stuff, we'll hack something to the same effect:
+        utils._codeNodes.push func.body.unwrap()
+        utils.jsToNode "macro._codeNodes[#{utils._codeNodes.length-1}]"
+    exports.utils = utils
+  else
+    root.macro = utils = exports.utils
+
   # And now we'll start the actual work.
   nodeTypes.walk ast, (n) ->
     if (name = getCalleeName(n)) and utils._macros.hasOwnProperty(name)

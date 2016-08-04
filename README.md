@@ -116,8 +116,15 @@ buildInfo = macro -> macro.valToNode
 	host: macro.require('os').hostname()
 ```
 
-**macro.csToNode(scriptString)**
+**macro.bcToNode(scriptString)**
 Parse a string of BlackCoffee script and return its main node.
+Included macros will be executed.
+```CoffeeScript
+macro -> macro.csToNode "x = a+b+(#{process.env.buildMagic})+4"
+```
+
+**macro.csToNode(scriptString)**
+Parse a string of CoffeeScript script and return its main node.
 ```CoffeeScript
 macro -> macro.csToNode "x = a+b+(#{process.env.buildMagic})+4"
 ```
@@ -128,6 +135,10 @@ Creates a `literal` node, embedding a piece of unprocessed Javascript. As this n
 macro -> macro.jsToNode @someFancyToolThatGeneratesJavascript()
 ```
 
+**macro.bcFileToNode(filename,language)**
+A little wrapper around `bcToNode` that tries to load `filename` from disk using `fs.readFileSync`. Of course, this won't work when compiling in the browser.
+
+This helper can be used for file inclusion, though one may want to write a wrapper macro around it, to search in the appropriate path(s) and maybe to dependency tracking and such.
 **macro.fileToNode(filename,language)**
 A little wrapper around `csToNode` and `jsToNode` that tries to load `filename` from disk using `fs.readFileSync`. Of course, this won't work when compiling in the browser. If `language` is `'js'` or `'cs'`, that is how the file will be interpreted. If it is not set, `fileToNode` will make a guess based on the file extension.
 
